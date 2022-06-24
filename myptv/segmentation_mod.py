@@ -8,9 +8,9 @@ Created on Fri Dec  7 18:02:07 2018
 contains a class for segmentation of circular particles
 """
 
-from numpy import zeros, ones, savetxt, meshgrid
+from numpy import zeros, ones, savetxt, meshgrid,array,square,stack,sqrt,mean,append,transpose,matmul
 from numpy import sum as npsum
-
+import numpy as np
 from skimage.io import imread
 
 from scipy.signal import convolve2d
@@ -29,6 +29,7 @@ class particle_segmentation(object):
                  min_xsize=None, max_xsize=None,
                  min_ysize=None, max_ysize=None,
                  min_mass=None, max_mass=None,
+                 pca_limit=1.0,
                  method='labeling'):
         '''
         inputs - 
@@ -76,6 +77,7 @@ class particle_segmentation(object):
         self.bbox_limits = (min_xsize, max_xsize, min_ysize, max_ysize)
         self.mass_limits = (min_mass, max_mass)
         self.loc_filter = local_filter
+        self.pca_limit = pca_limit
         
         if method not in ['dilation', 'labeling']:
             raise ValueError('method "%s" unknown.'%method)
@@ -304,15 +306,82 @@ class particle_segmentation(object):
             
             stamp_y, stamp_x = meshgrid(range(self.im.shape[1]), 
                                         range(self.im.shape[0]))
-            for loc in blob_pixels:
+                        
+            for blob in range(len(blob_pixels)):
+                
+                index = np.argwhere(self.labeled == blob+1)/1.0
+                
+                X_vec = index[:,0].astype(int)
+                Y_vec = index[:,1].astype(int)
+                # print(X_vec)
+                loc = blob_pixels[blob]
+                
                 mask = 1.0*(self.labeled[loc]>0)
                 mass = npsum(self.processed_im[loc] * mask)
                 X = npsum(stamp_x[loc] * self.processed_im[loc] * mask) / mass
                 Y = npsum(stamp_y[loc] * self.processed_im[loc] * mask) / mass
                 center = [round(X, ndigits=2), round(Y, ndigits=2)]
                 box_size = list(mask.shape)
-                blobs.append( [center, box_size, mass])
                 
+                if True:    # Eric: should be adjusted to be used only for the case of fibers
+                    
+                    mass = npsum(self.processed_im[X_vec,Y_vec])
+                    
+                    X = npsum(X_vec * self.processed_im[X_vec,Y_vec]) / mass
+                    
+                    Y = npsum(Y_vec * self.processed_im[X_vec,Y_vec]) / mass
+                    
+                    center = [round(X, ndigits=2), round(Y, ndigits=2)]
+                    
+                    X_vec = X_vec.astype(float)
+                    Y_vec = Y_vec.astype(float)
+                    
+                    X_vec -= mean(X_vec)
+                    Y_vec -= mean(Y_vec)
+                    
+                    temp1 = array([X_vec,Y_vec])
+                    cov = matmul(temp1,transpose(temp1))
+                                        
+                    a = cov[0,0]
+                    b = cov[0,1]
+                    c = cov[1,0]
+                    d = cov[1,1]
+
+                    temp1 = (d+a)/2
+                    temp2 = (sqrt(square(d+a)-4*(a*d-c*b)))/2
+
+                    l1 = temp1 + temp2
+                    l2 = temp1 - temp2
+                    
+
+                    e1 = array([b,l1-a])
+                    e2 = array([l2-d,c])
+                    
+                    # for bug appearing if eigenvalues are zero -> does not affect particle or fiber segmentation
+                    if l1 == 0:
+                        l1 = 0.1
+                    if l2 == 0:
+                        l2 = 0.1
+                    
+                    if l1 > l2:
+                        if e1[0] != 0 and e1[1] != 0:
+                            e1 = e1/(sqrt(square(e1[0])+square(e1[1])))
+                            
+                        if e1[0] < 0:
+                            e1 = e1*(-1)
+                        
+                        pca = [e1[0],e1[1],l1/l2]
+                    else:
+                        if e2[0] != 0 and e2[1] != 0:
+                            e2 = e2/(sqrt(square(e2[0])+square(e2[1])))
+                        
+                        if e2[0] < 0:
+                            e2 = e2*(-1)
+                        
+                        pca = [e2[0],e2[1],l2/l1]
+                    
+                blobs.append( [center, box_size, mass, pca] )
+                                        
             self.blobs = blobs
    
         
@@ -375,7 +444,18 @@ class particle_segmentation(object):
         savetxt(fname, blob_list, 
                 fmt=['%.02f','%.02f','%d','%d','%d','%d'], delimiter='\t')
         
-        
+    def save_results_direction(self, fname):
+        '''
+        This is used to save the blobs found in a text file with 
+        the given name fname.
+        '''
+        blob_list = []
+        for blb in self.blobs:
+            blob_list.append([blb[0][0], blb[0][1], blb[1][0], blb[1][1],
+                              blb[2], 0, blb[3][0],blb[3][1]])
+            
+        savetxt(fname, blob_list, 
+                fmt=['%.02f','%.02f','%d','%d','%d','%d','%.05f','%.05f'], delimiter='\t')
         
         
 
@@ -394,6 +474,7 @@ class loop_segmentation(object):
                  min_xsize=None, max_xsize=None,
                  min_ysize=None, max_ysize=None,
                  min_mass=None, max_mass=None,
+                 pca_limit=1.0,
                  method='labeling'):
         '''
         dir_name - string with the name of the directory that holds the 
@@ -423,6 +504,7 @@ class loop_segmentation(object):
         self.mass_limits = (min_mass, max_mass)
         self.loc_filter = local_filter
         self.method = method
+        self.pca_limit = pca_limit
     
     
     def get_file_names(self):
@@ -472,13 +554,14 @@ class loop_segmentation(object):
                                        min_ysize=self.bbox_limits[2],
                                        min_mass=self.mass_limits[0],
                                        max_mass=self.mass_limits[1],
+                                       pca_limit=self.pca_limit,
                                        method = self.method,
                                        particle_size=self.p_size)
             ps.get_blobs()
             ps.apply_blobs_size_filter()
             for blb in ps.blobs:
                 blob_list.append([blb[0][0], blb[0][1], blb[1][0], blb[1][1],
-                                  blb[2], i+i0])
+                                  blb[2], i+i0, blb[3][0], blb[3][1]])
         self.blobs = blob_list
         
                                        
@@ -489,10 +572,23 @@ class loop_segmentation(object):
         The format of the results is
         center_x, center_y, size_x, size_y, area, frame_number
         '''
-        savetxt(fname, self.blobs, 
+        blob_list = []
+        for blb in self.blobs:
+            blob_list.append(blb[0:-2])
+            
+        savetxt(fname, blob_list, 
                 fmt=['%.02f','%.02f','%d','%d','%d','%d'], delimiter='\t')
         
         
+    def save_results_direction(self, fname):
+        '''
+        Will save the extracted blobs. 
+        
+        The format of the results is
+        center_x, center_y, size_x, size_y, area, frame_number, x,y
+        '''
+        savetxt(fname, self.blobs, 
+                fmt=['%.02f','%.02f','%d','%d','%d','%d','%.05f','%.05f'], delimiter='\t')
         
     
     
