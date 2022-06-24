@@ -1,0 +1,78 @@
+- calibration:
+    camera_name: cam2
+    calibration_points_file: ./Calibration/cal_points2
+    target_file: ./Calibration/target_file
+    segmented_points_file: ./Calibration/cal_blobs_2
+    calibration_image: ./Calibration/cal2.tif
+    resolution: 1248, 1248
+
+- segmentation:
+    Number_of_images: None
+    images_folder: Images_cam2
+    single_image_name: Cam1.1005012.tif
+    image_extension: '.tif'
+    mask: 1.0
+    ROI: 1, 1248, 1, 1248
+    plot_result: True
+    threshold: 50
+    median: 5
+    blur_sigma: None
+    local_filter: None
+    min_xsize: 3.0
+    min_ysize: 3.0
+    min_mass: 5000.0
+    max_xsize: 1000.0
+    max_ysize: 1000.0
+    max_mass: 100000000000
+    method: labeling
+    particle_size: 10
+    pca_limit: 20
+    save_name: blobs_cam2
+    
+- matching:
+    blob_files: blobs_cam1, blobs_cam2
+    N_frames: None
+    camera_names: cam1, cam2
+    cam_resolution: 1248, 1248
+    ROI: -250.0, 350.0, -250.0, 350.0, -450.0, 350.0
+    voxel_size: 20.0
+    max_blob_distance: 100.0
+    max_err: 30.0
+    save_name: particles
+
+- tracking:
+    particles_file_name: particles
+    N_frames: None
+    d_max: 20.0
+    dv_max: 20.0
+    save_name: trajectories
+
+- calibration_with_particles:
+    camera_name: cam1
+    resolution: 1248, 1248
+    traj_filename: './trajectories'
+    cam_number: 1 
+    blobs_fname: 'blobs_cam1'
+    min_traj_len: 4
+    max_point_number: 200
+
+- smoothing:
+    trajectory_file: trajectories
+    window_size: 5
+    polynom_order: 3
+    save_name: smoothed_trajectories
+
+- stitching:
+    trajectory_file: smoothed_trajectories
+    max_time_separation: 4
+    max_distance: 0.4
+    save_name: trajecotries_stitched
+    
+- orientations:
+    camera_names: cam1, cam2
+    cam_resolution: 1248, 1248
+    blob_files: blobs_cam1_direction, blobs_cam2_direction
+    fibers_file: particles
+    trajectory_file: trajectories
+    save_name: fiber_orientations
+
